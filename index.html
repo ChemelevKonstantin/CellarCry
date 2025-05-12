@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crawler</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="uiOverlay"></div>
+    <div id="statsOverlay"></div>
+    <div id="gameOverOverlay" style="display:none;">
+        <div class="game-over-content">
+            <h1>Game Over</h1>
+            <button id="restartBtn">Restart</button>
+        </div>
+    </div>
+    <button id="fullscreenBtn" style="position:absolute;top:16px;right:32px;z-index:20;">Fullscreen</button>
+    <div id="startMenu" style="display:flex;flex-direction:column;align-items:center;justify-content:center;position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(20,20,20,0.92);z-index:1000;">
+        <h1 style="color:#f5e663;font-size:3em;margin-bottom:24px;letter-spacing:2px;">GameCrawler</h1>
+        <button id="startGameBtn" style="font-size:1.5em;padding:16px 48px;border-radius:12px;border:none;background:#f5e663;color:#222;cursor:pointer;box-shadow:0 2px 12px #0008;">Start Game</button>
+    </div>
+    <div id="pauseOverlay" style="display:none;position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.55);z-index:900;align-items:center;justify-content:center;">
+        <h1 style="color:#f5e663;font-size:3em;text-align:center;width:100vw;">Paused</h1>
+    </div>
+    <canvas id="gameCanvas"></canvas>
+    <script src="script.js"></script>
+</body>
+</html> 
