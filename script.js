@@ -8,6 +8,10 @@ canvas.height = 768;
 const wallImg = new Image();
 wallImg.src = 'assets/wall1.png';
 
+// --- Floor Image ---
+const floorImg = new Image();
+floorImg.src = 'assets/floor1.png';
+
 // --- UI Overlay ---
 const uiOverlay = document.getElementById('uiOverlay');
 const statsOverlay = document.getElementById('statsOverlay');
@@ -27,21 +31,22 @@ const player = {
     h: 80,
     speed: 3,
     color: '#f5e663',
-    health: 5,
+    health: 3,
     maxHealth: 5,
     items: [], // passive items
     dir: {x: 0, y: 0},
     coins: 0,
     keys: 0,
-    bombs: 2,
-    heals: 1,
+    bombs: 1,
+    heals: 0,
     activeItem: null, // {name, cooldown, onUse}
     activeCooldown: 0,
-    tearDamage: 5,
+    tearDamage: 1,
     bombCooldown: 0, // cooldown for bomb placement
     tearSpeed: 6, // new: tear velocity (Higher = faster)
-    tearRate: 50, // new: frames between shots (lower = faster)
+    tearRate: 100, // new: frames between shots (lower = faster)
     enemiesKilled: 0,
+    tearDropSize: 18, // NEW: teardrop size (default 18)
 };
 
 // --- Room Generation Helper ---
@@ -331,15 +336,15 @@ function movePlayer() {
                 nextX + player.w/2 > (midCol-1)*TILE_SIZE &&
                 nextX + player.w/2 < (midCol+2)*TILE_SIZE
             ) blocked = true;
-            // Left door gap
+            // Left door gap (FIXED: match visual door vertical range)
             if (
                 nextX < TILE_SIZE / 2 &&
                 nextY + player.h/2 > (midRow-1)*TILE_SIZE &&
                 nextY + player.h/2 < (midRow+2)*TILE_SIZE
             ) blocked = true;
-            // Right door gap
+            // Right door gap (FIXED: match visual door vertical range)
             if (
-                nextX + player.w > ROOM_WIDTH - TILE_SIZE / 2 - player.w/2 &&
+                nextX + player.w > ROOM_WIDTH - TILE_SIZE / 2 &&
                 nextY + player.h/2 > (midRow-1)*TILE_SIZE &&
                 nextY + player.h/2 < (midRow+2)*TILE_SIZE
             ) blocked = true;
@@ -348,6 +353,41 @@ function movePlayer() {
     if (!blocked) {
         player.x = nextX;
         player.y = nextY;
+    } else {
+        // Try moving only in x
+        let xBlocked = false;
+        let testCornersX = [
+            {x: nextX, y: player.y},
+            {x: nextX + player.w, y: player.y},
+            {x: nextX, y: player.y + player.h},
+            {x: nextX + player.w, y: player.y + player.h}
+        ];
+        for (let c of testCornersX) {
+            let gridX = Math.floor(c.x / TILE_SIZE);
+            let gridY = Math.floor(c.y / TILE_SIZE);
+            if (currentRoom[gridY] && currentRoom[gridY][gridX] === 1) {
+                xBlocked = true;
+                break;
+            }
+        }
+        if (!xBlocked) player.x = nextX;
+        // Try moving only in y
+        let yBlocked = false;
+        let testCornersY = [
+            {x: player.x, y: nextY},
+            {x: player.x + player.w, y: nextY},
+            {x: player.x, y: nextY + player.h},
+            {x: player.x + player.w, y: nextY + player.h}
+        ];
+        for (let c of testCornersY) {
+            let gridX = Math.floor(c.x / TILE_SIZE);
+            let gridY = Math.floor(c.y / TILE_SIZE);
+            if (currentRoom[gridY] && currentRoom[gridY][gridX] === 1) {
+                yBlocked = true;
+                break;
+            }
+        }
+        if (!yBlocked) player.y = nextY;
     }
     // Clamp to canvas as fallback
     const minX = 0;
@@ -356,6 +396,93 @@ function movePlayer() {
     const maxY = ROOM_HEIGHT - player.h;
     player.x = Math.max(minX, Math.min(maxX, player.x));
     player.y = Math.max(minY, Math.min(maxY, player.y));
+    // After wall/door collision and smooth movement, check obstacles
+    let playerRect = {x: player.x + player.w/2, y: player.y + player.h/2, w: player.w, h: player.h};
+    let roomObj = dungeon[currentRoomY][currentRoomX];
+    if (roomObj.objects) {
+        for (let obj of roomObj.objects) {
+            if (obj.type === 'obstacle' && obj.rects) {
+                for (let r of obj.rects) {
+                    if (
+                        playerRect.x + playerRect.w/2 > r.x - r.w/2 &&
+                        playerRect.x - playerRect.w/2 < r.x + r.w/2 &&
+                        playerRect.y + playerRect.h/2 > r.y - r.h/2 &&
+                        playerRect.y - playerRect.h/2 < r.y + r.h/2
+                    ) {
+                        // Undo move
+                        player.x -= player.dir.x * player.speed;
+                        player.y -= player.dir.y * player.speed;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    // --- Smooth obstacle collision: try partial moves if blocked by obstacle ---
+    let obstacleBlocked = false;
+    if (roomObj.objects) {
+        for (let obj of roomObj.objects) {
+            if (obj.type === 'obstacle' && obj.rects) {
+                for (let r of obj.rects) {
+                    if (
+                        playerRect.x + playerRect.w/2 > r.x - r.w/2 &&
+                        playerRect.x - playerRect.w/2 < r.x + r.w/2 &&
+                        playerRect.y + playerRect.h/2 > r.y - r.h/2 &&
+                        playerRect.y - playerRect.h/2 < r.y + r.h/2
+                    ) {
+                        obstacleBlocked = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (obstacleBlocked) {
+        // Try moving only in x
+        let testX = player.x + player.dir.x * player.speed;
+        let testRectX = {x: testX + player.w/2, y: player.y + player.h/2, w: player.w, h: player.h};
+        let xBlocked = false;
+        if (roomObj.objects) {
+            for (let obj of roomObj.objects) {
+                if (obj.type === 'obstacle' && obj.rects) {
+                    for (let r of obj.rects) {
+                        if (
+                            testRectX.x + testRectX.w/2 > r.x - r.w/2 &&
+                            testRectX.x - testRectX.w/2 < r.x + r.w/2 &&
+                            testRectX.y + testRectX.h/2 > r.y - r.h/2 &&
+                            testRectX.y - testRectX.h/2 < r.y + r.h/2
+                        ) {
+                            xBlocked = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!xBlocked) player.x = testX;
+        // Try moving only in y
+        let testY = player.y + player.dir.y * player.speed;
+        let testRectY = {x: player.x + player.w/2, y: testY + player.h/2, w: player.w, h: player.h};
+        let yBlocked = false;
+        if (roomObj.objects) {
+            for (let obj of roomObj.objects) {
+                if (obj.type === 'obstacle' && obj.rects) {
+                    for (let r of obj.rects) {
+                        if (
+                            testRectY.x + testRectY.w/2 > r.x - r.w/2 &&
+                            testRectY.x - testRectY.w/2 < r.x + r.w/2 &&
+                            testRectY.y + testRectY.h/2 > r.y - r.h/2 &&
+                            testRectY.y - testRectY.h/2 < r.y + r.h/2
+                        ) {
+                            yBlocked = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!yBlocked) player.y = testY;
+    }
 }
 
 // --- Drawing ---
@@ -372,8 +499,13 @@ function drawRoom() {
                     ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
                 }
             } else {
-                ctx.fillStyle = '#353535'; // floor/door (darker)
-                ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                // Draw floor image if loaded, else fallback to color
+                if (floorImg.complete && floorImg.naturalWidth !== 0) {
+                    ctx.drawImage(floorImg, x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                } else {
+                    ctx.fillStyle = '#353535'; // floor/door (darker)
+                    ctx.fillRect(x * TILE_SIZE, y * TILE_SIZE, TILE_SIZE, TILE_SIZE);
+                }
             }
         }
     }
@@ -385,8 +517,8 @@ function drawRoom() {
     ctx.restore();
     // Draw doors in the wall gap (not overlapping border)
     ctx.save();
-    ctx.fillStyle = '#b97a56'; // brown door color
-    ctx.strokeStyle = '#fff';
+    ctx.fillStyle = '#4b2e13'; // dark brown door color
+    ctx.strokeStyle = '#111'; // black stroke
     ctx.lineWidth = 2.5;
     // Center calculations
     let midCol = Math.floor(ROOM_COLS / 2);
@@ -430,23 +562,102 @@ function drawRoom() {
     ctx.restore();
 }
 
+// --- Enemy Images ---
+const enemyImgs = [
+    new Image(), // e1.png
+    new Image(), // e2.png
+    new Image(), // e3.png
+    new Image(), // e4.png
+    new Image(), // e5.png
+    new Image(), // e6.png
+    new Image(), // e7.png
+    new Image(), // e8.png
+    new Image(), // e9.png
+    new Image(), // e10.png
+    new Image(), // e11.png
+    new Image(), // e12.png
+    new Image(), // e13.png
+    new Image(), // e14.png
+    new Image(), // e15.png
+    new Image(), // e16.png
+    new Image(), // e17.png
+    new Image(), // e18.png
+    new Image(), // e19.png
+    new Image(), // e20.png
+    new Image(), // e21.png
+    new Image(), // e22.png
+    new Image(), // e23.png
+    new Image(), // e24.png
+];
+enemyImgs[0].src = 'assets/enemies/e1.png';
+enemyImgs[1].src = 'assets/enemies/e2.png';
+enemyImgs[2].src = 'assets/enemies/e3.png';
+enemyImgs[3].src = 'assets/enemies/e4.png';
+enemyImgs[4].src = 'assets/enemies/e5.png';
+enemyImgs[5].src = 'assets/enemies/e6.png';
+enemyImgs[6].src = 'assets/enemies/e7.png';
+enemyImgs[7].src = 'assets/enemies/e8.png';
+enemyImgs[8].src = 'assets/enemies/e9.png';
+enemyImgs[9].src = 'assets/enemies/e10.png';
+enemyImgs[10].src = 'assets/enemies/e11.png';
+enemyImgs[11].src = 'assets/enemies/e12.png';
+enemyImgs[12].src = 'assets/enemies/e13.png';
+enemyImgs[13].src = 'assets/enemies/e14.png';
+enemyImgs[14].src = 'assets/enemies/e15.png';
+enemyImgs[15].src = 'assets/enemies/e16.png';
+enemyImgs[16].src = 'assets/enemies/e17.png';
+enemyImgs[17].src = 'assets/enemies/e18.png';
+enemyImgs[18].src = 'assets/enemies/e19.png';
+enemyImgs[19].src = 'assets/enemies/e20.png';
+enemyImgs[20].src = 'assets/enemies/e21.png';
+enemyImgs[21].src = 'assets/enemies/e22.png';
+enemyImgs[22].src = 'assets/enemies/e23.png';
+enemyImgs[23].src = 'assets/enemies/e24.png';
 // --- Enemy Types ---
 const ENEMY_TYPES = [
-    // Regulars
-    { name: 'Blob', category: 'Regular', minLevel: 1, maxHealth: 2, speed: 0.7, color: '#e55', emoji: '🟠', effect: null },
-    { name: 'Fastling', category: 'Regular', minLevel: 2, maxHealth: 1, speed: 1.3, color: '#5af', emoji: '🟦', effect: null },
-    { name: 'Splitter', category: 'Regular', minLevel: 3, maxHealth: 2, speed: 0.8, color: '#ad5', emoji: '🟩', effect: 'split' },
-    { name: 'Bouncer', category: 'Regular', minLevel: 2, maxHealth: 2, speed: 1.0, color: '#fa5', emoji: '🟫', effect: 'bounce' },
-    { name: 'Wanderer', category: 'Regular', minLevel: 1, maxHealth: 1, speed: 0.9, color: '#5fa', emoji: '🟩', effect: 'wander' },
-    // Miniboss
-    { name: 'Charger', category: 'Miniboss', minLevel: 2, maxHealth: 6, speed: 1.1, color: '#f5e663', emoji: '🟡', effect: 'charge' },
-    { name: 'Shooter', category: 'Miniboss', minLevel: 3, maxHealth: 5, speed: 0.7, color: '#b5f', emoji: '🟣', effect: 'shoot' },
-    { name: 'Spitter', category: 'Miniboss', minLevel: 3, maxHealth: 4, speed: 0.8, color: '#0cf', emoji: '🟦', effect: 'spit' },
-    { name: 'Tank', category: 'Miniboss', minLevel: 2, maxHealth: 10, speed: 0.4, color: '#888', emoji: '⬛', effect: 'tank' },
-    // Boss
-    { name: 'Big Boss', category: 'Boss', minLevel: 2, maxHealth: 15, speed: 0.6, color: '#f33', emoji: '🔴', effect: 'boss' },
-    { name: 'Twin Boss', category: 'Boss', minLevel: 3, maxHealth: 8, speed: 0.8, color: '#f93', emoji: '🟤', effect: 'twin' },
-    { name: 'Summoner', category: 'Boss', minLevel: 1, maxHealth: 12, speed: 0.5, color: '#3cf', emoji: '🔵', effect: 'summon' },
+    // --- REGULARS ---
+    { name: 'Blob', category: 'Regular', minLevel: 1, maxHealth: 2, speed: 0.7, color: '#e55', img: enemyImgs[0], effect: null },
+    { name: 'Fastling', category: 'Regular', minLevel: 2, maxHealth: 1, speed: 1.5, color: '#5af', img: enemyImgs[1], effect: null },
+    { name: 'Splitter', category: 'Regular', minLevel: 3, maxHealth: 2, speed: 0.8, color: '#ad5', img: enemyImgs[2], effect: 'split' },
+    { name: 'Bouncer', category: 'Regular', minLevel: 2, maxHealth: 2, speed: 1.0, color: '#fa5', img: enemyImgs[3], effect: 'bounce' },
+    { name: 'Wanderer', category: 'Regular', minLevel: 1, maxHealth: 1, speed: 0.9, color: '#5fa', img: enemyImgs[4], effect: 'wander' },
+    // NEW REGULARS
+    { name: 'Armored', category: 'Regular', minLevel: 4, maxHealth: 5, speed: 0.6, color: '#888', img: enemyImgs[5], effect: 'armor' },
+    { name: 'Exploder', category: 'Regular', minLevel: 5, maxHealth: 2, speed: 1.0, color: '#f44', img: enemyImgs[9], effect: 'explode' },
+    { name: 'Sniper', category: 'Regular', minLevel: 6, maxHealth: 2, speed: 0.7, color: '#0cf', img: enemyImgs[1], effect: 'snipe' },
+    { name: 'Leech', category: 'Regular', minLevel: 7, maxHealth: 3, speed: 1.2, color: '#0f0', img: enemyImgs[2], effect: 'leech' },
+    { name: 'Shadow', category: 'Regular', minLevel: 8, maxHealth: 2, speed: 1.8, color: '#222', img: enemyImgs[3], effect: 'shadow' },
+    { name: 'Frostling', category: 'Regular', minLevel: 9, maxHealth: 3, speed: 1.1, color: '#8cf', img: enemyImgs[4], effect: 'freeze' },
+
+    // --- MINIBOSSES ---
+    { name: 'Charger', category: 'Miniboss', minLevel: 2, maxHealth: 6, speed: 1.4, color: '#f5e663', img: enemyImgs[5], effect: 'charge' },
+    { name: 'Shooter', category: 'Miniboss', minLevel: 3, maxHealth: 5, speed: 0.7, color: '#b5f', img: enemyImgs[1], effect: 'shoot' },
+    { name: 'Spitter', category: 'Miniboss', minLevel: 3, maxHealth: 4, speed: 0.8, color: '#0cf', img: enemyImgs[2], effect: 'spit' },
+    { name: 'Tank', category: 'Miniboss', minLevel: 2, maxHealth: 10, speed: 0.6, color: '#888', img: enemyImgs[3], effect: 'tank' },
+    // NEW MINIBOSSES
+    { name: 'Pyro', category: 'Miniboss', minLevel: 4, maxHealth: 12, speed: 0.9, color: '#f80', img: enemyImgs[11], effect: 'fire' },
+    { name: 'Frostbite', category: 'Miniboss', minLevel: 5, maxHealth: 12, speed: 1.0, color: '#8cf', img: enemyImgs[12], effect: 'freeze' },
+    { name: 'Vampire', category: 'Miniboss', minLevel: 6, maxHealth: 11, speed: 1.1, color: '#c06', img: enemyImgs[3], effect: 'leech' },
+    { name: 'Specter', category: 'Miniboss', minLevel: 7, maxHealth: 15, speed: 1.5, color: '#aaa', img: enemyImgs[13], effect: 'phase' },
+    { name: 'Bomber', category: 'Miniboss', minLevel: 8, maxHealth: 13, speed: 1.0, color: '#fd0', img: enemyImgs[16], effect: 'bomb' },
+    { name: 'Stormling', category: 'Miniboss', minLevel: 9, maxHealth: 14, speed: 1.2, color: '#7cf', img: enemyImgs[17], effect: 'lightning' },
+
+    // --- BOSSES ---
+    { name: 'Big Boss', category: 'Boss', minLevel: 2, maxHealth: 15, speed: 0.8, color: '#f33', img: enemyImgs[8], effect: 'bosstears', w: 136, h: 136 },
+    { name: 'Twin Boss', category: 'Boss', minLevel: 1, maxHealth: 10, speed: 0.9, color: '#f93', img: enemyImgs[7], effect: 'twin', w: 72, h: 72 },
+    { name: 'Summoner', category: 'Boss', minLevel: 3, maxHealth: 20, speed: 0.6, color: '#3cf', img: enemyImgs[10], effect: 'summon', w: 80, h: 80 },
+    { name: 'Stormcaller', category: 'Boss', minLevel: 4, maxHealth: 18, speed: 0.7, color: '#7cf', img: enemyImgs[18], effect: 'lightning', w: 88, h: 88 },
+    { name: 'Mirror King', category: 'Boss', minLevel: 5, maxHealth: 24, speed: 0.6, color: '#fff', img: enemyImgs[19], effect: 'reflect', w: 100, h: 100 },
+    { name: 'Graviton', category: 'Boss', minLevel: 6, maxHealth: 28, speed: 0.5, color: '#aaf', img: enemyImgs[15], effect: 'gravity', w: 110, h: 110 },
+    { name: 'Swarm Queen', category: 'Boss', minLevel: 7, maxHealth: 30, speed: 0.8, color: '#fae', img: enemyImgs[4], effect: 'swarm', w: 90, h: 90 },
+    { name: 'Time Eater', category: 'Boss', minLevel: 8, maxHealth: 36, speed: 0.7, color: '#9cf', img: enemyImgs[5], effect: 'slow', w: 84, h: 84 },
+    // NEW BOSSES
+    { name: 'Obliterator', category: 'Boss', minLevel: 5, maxHealth: 22, speed: 0.9, color: '#000', img: enemyImgs[22], effect: 'obliterate', w: 120, h: 120 },
+    { name: 'Hydra', category: 'Boss', minLevel: 6, maxHealth: 18, speed: 1.0, color: '#0f8', img: enemyImgs[14], effect: 'multihead', w: 100, h: 100 },
+    { name: 'Frost King', category: 'Boss', minLevel: 7, maxHealth: 20, speed: 0.8, color: '#8cf', img: enemyImgs[2], effect: 'freeze', w: 110, h: 110 },
+    { name: 'Pyromancer', category: 'Boss', minLevel: 8, maxHealth: 19, speed: 1.1, color: '#f80', img: enemyImgs[23], effect: 'fire', w: 90, h: 90 },
+    { name: 'Shadow Lord', category: 'Boss', minLevel: 9, maxHealth: 50, speed: 1.3, color: '#222', img: enemyImgs[20], effect: 'shadow', w: 192, h: 192 },
+    { name: 'Demonic Emperor', category: 'Boss', minLevel: 9, maxHealth: 50, speed: 1.2, color: '#7cf', img: enemyImgs[21], effect: 'lightning', w: 198, h: 198 },
 ];
 // --- Current Dungeon Level (for future expansion) ---
 let dungeonLevel = 1;
@@ -456,10 +667,10 @@ function spawnEnemyOfType(type, x, y) {
     return {
         x: x * TILE_SIZE + TILE_SIZE/2,
         y: y * TILE_SIZE + TILE_SIZE/2,
-        w: 56,
-        h: 56,
+        w: type.w || 56,
+        h: type.h || 56,
         color: type.color,
-        emoji: type.emoji,
+        img: type.img,
         speed: type.speed,
         health: type.maxHealth,
         maxHealth: type.maxHealth,
@@ -503,6 +714,17 @@ function pickBossRooms() {
                         !(x === startX && y === startY) &&
                         !usedBossRooms.has(key)
                     ) {
+                        candidates.push({x, y, key});
+                    }
+                }
+            }
+        }
+        // Fallback: forcibly assign a boss room if still none found
+        if (candidates.length === 0) {
+            for (let y = 0; y < DUNGEON_SIZE; y++) {
+                for (let x = 0; x < DUNGEON_SIZE; x++) {
+                    let key = `${x},${y}`;
+                    if (dungeon[y][x].exists && !(x === startX && y === startY)) {
                         candidates.push({x, y, key});
                     }
                 }
@@ -583,15 +805,16 @@ function shootTear(dir) {
         dx: dx,
         dy: dy,
         vy: vy,
-        r: 18,
-        baseR: 18,
+        r: player.tearDropSize, // Use player stat
+        baseR: player.tearDropSize, // Use player stat
         color: '#8cf',
         alive: true,
         life: 0,
         maxLife: 120,
         startX: startX,
         startY: startY,
-        dirY: dir.y // store original Y direction
+        dirY: dir.y, // store original Y direction
+        source: 'player'
     });
 }
 
@@ -644,38 +867,43 @@ function updateEnemies() {
         if (!allEnemiesDead) {
             let midCol = Math.floor(ROOM_COLS / 2);
             let midRow = Math.floor(ROOM_ROWS / 2);
+            // Calculate enemy bounding box
+            let left = enemy.x - enemy.w/2;
+            let right = enemy.x + enemy.w/2;
+            let top = enemy.y - enemy.h/2;
+            let bottom = enemy.y + enemy.h/2;
             // Up door gap
             if (
-                enemy.y < TILE_SIZE / 2 &&
-                enemy.x > (midCol-1)*TILE_SIZE &&
-                enemy.x < (midCol+2)*TILE_SIZE
+                top < TILE_SIZE / 2 &&
+                (left + enemy.w/2) > (midCol-1)*TILE_SIZE &&
+                (right - enemy.w/2) < (midCol+2)*TILE_SIZE
             ) {
                 enemy.x = prevX;
                 enemy.y = prevY;
             }
             // Down door gap
             if (
-                enemy.y > ROOM_HEIGHT - TILE_SIZE / 2 - enemy.h/2 &&
-                enemy.x > (midCol-1)*TILE_SIZE &&
-                enemy.x < (midCol+2)*TILE_SIZE
+                bottom > ROOM_HEIGHT - TILE_SIZE / 2 &&
+                (left + enemy.w/2) > (midCol-1)*TILE_SIZE &&
+                (right - enemy.w/2) < (midCol+2)*TILE_SIZE
             ) {
                 enemy.x = prevX;
                 enemy.y = prevY;
             }
             // Left door gap
             if (
-                enemy.x < TILE_SIZE / 2 &&
-                enemy.y > (midRow-1)*TILE_SIZE &&
-                enemy.y < (midRow+2)*TILE_SIZE
+                left < TILE_SIZE / 2 &&
+                (top + enemy.h/2) > (midRow-1)*TILE_SIZE &&
+                (bottom - enemy.h/2) < (midRow+2)*TILE_SIZE
             ) {
                 enemy.x = prevX;
                 enemy.y = prevY;
             }
             // Right door gap
             if (
-                enemy.x > ROOM_WIDTH - TILE_SIZE / 2 - enemy.w/2 &&
-                enemy.y > (midRow-1)*TILE_SIZE &&
-                enemy.y < (midRow+2)*TILE_SIZE
+                right > ROOM_WIDTH - TILE_SIZE / 2 &&
+                (top + enemy.h/2) > (midRow-1)*TILE_SIZE &&
+                (bottom - enemy.h/2) < (midRow+2)*TILE_SIZE
             ) {
                 enemy.x = prevX;
                 enemy.y = prevY;
@@ -721,7 +949,8 @@ function updateEnemies() {
                         maxLife: 60,
                         startX: enemy.x,
                         startY: enemy.y,
-                        dirY: dy/dist
+                        dirY: dy/dist,
+                        source: 'enemy'
                     });
                     enemy.state.cooldown = 60;
                 }
@@ -788,7 +1017,8 @@ function updateEnemies() {
                         maxLife: 60,
                         startX: enemy.x,
                         startY: enemy.y,
-                        dirY: Math.sin(angle)
+                        dirY: Math.sin(angle),
+                        source: 'enemy'
                     });
                 }
                 enemy.state.cooldown = 90;
@@ -803,7 +1033,7 @@ function updateEnemies() {
         } else if (enemy.effect === 'twin') {
             // Twin Boss: if one dies, the other speeds up
             if (twinBosses.length === 1 && !enemy.state.angry) {
-                enemy.speed *= 1.7;
+                enemy.speed *= 2.3;
                 enemy.state.angry = true;
             }
         } else if (enemy.effect === 'summon') {
@@ -815,6 +1045,34 @@ function updateEnemies() {
                 let ey = (enemy.y + (Math.random()-0.5)*60) / TILE_SIZE;
                 roomObj.enemies.push(spawnEnemyOfType(type, ex, ey));
                 enemy.state.cooldown = 120;
+            } else {
+                enemy.state.cooldown--;
+            }
+        } else if (enemy.effect === 'bosstears') {
+            // Boss shoots slow, large tears at the player
+            if (!enemy.state.cooldown || enemy.state.cooldown <= 0) {
+                let dx = player.x + player.w/2 - enemy.x;
+                let dy = player.y + player.h/2 - enemy.y;
+                let dist = Math.hypot(dx, dy);
+                let speed = 3; // slow
+                tears.push({
+                    x: enemy.x,
+                    y: enemy.y,
+                    dx: dx/dist*speed,
+                    dy: dy/dist*speed*0.85,
+                    vy: 0,
+                    r: 22, // large tear
+                    baseR: 22,
+                    color: '#f33', // red
+                    alive: true,
+                    life: 0,
+                    maxLife: 90,
+                    startX: enemy.x,
+                    startY: enemy.y,
+                    dirY: dy/dist,
+                    source: 'enemy'
+                });
+                enemy.state.cooldown = 90;
             } else {
                 enemy.state.cooldown--;
             }
@@ -831,6 +1089,95 @@ function updateEnemies() {
         if (invincible === 0 && Math.abs(enemy.x - (player.x+player.w/2)) < (enemy.w/2+player.w/2) && Math.abs(enemy.y - (player.y+player.h/2)) < (enemy.h/2+player.h/2)) {
             player.health--;
             invincible = INVINCIBLE_TIME;
+        }
+        // Clamp enemy to inside the room (cannot leave wall box)
+        enemy.x = Math.max(TILE_SIZE + enemy.w/2, Math.min(ROOM_WIDTH - TILE_SIZE - enemy.w/2, enemy.x));
+        enemy.y = Math.max(TILE_SIZE + enemy.h/2, Math.min(ROOM_HEIGHT - TILE_SIZE - enemy.h/2, enemy.y));
+        // After wall/door collision, check obstacles
+        let enemyRect = {x: enemy.x, y: enemy.y, w: enemy.w, h: enemy.h};
+        if (roomObj.objects) {
+            for (let obj of roomObj.objects) {
+                if (obj.type === 'obstacle' && obj.rects) {
+                    for (let r of obj.rects) {
+                        if (
+                            enemyRect.x + enemyRect.w/2 > r.x - r.w/2 &&
+                            enemyRect.x - enemyRect.w/2 < r.x + r.w/2 &&
+                            enemyRect.y + enemyRect.h/2 > r.y - r.h/2 &&
+                            enemyRect.y - enemyRect.h/2 < r.y + r.h/2
+                        ) {
+                            // Undo move
+                            enemy.x = prevX;
+                            enemy.y = prevY;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        // --- Smooth obstacle collision: try partial moves if blocked by obstacle ---
+        let obstacleBlocked = false;
+        if (roomObj.objects) {
+            for (let obj of roomObj.objects) {
+                if (obj.type === 'obstacle' && obj.rects) {
+                    for (let r of obj.rects) {
+                        if (
+                            enemyRect.x + enemyRect.w/2 > r.x - r.w/2 &&
+                            enemyRect.x - enemyRect.w/2 < r.x + r.w/2 &&
+                            enemyRect.y + enemyRect.h/2 > r.y - r.h/2 &&
+                            enemyRect.y - enemyRect.h/2 < r.y + r.h/2
+                        ) {
+                            obstacleBlocked = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if (obstacleBlocked) {
+            // Try moving only in x
+            let testX = prevX + (enemy.x - prevX);
+            let testRectX = {x: testX, y: prevY, w: enemy.w, h: enemy.h};
+            let xBlocked = false;
+            if (roomObj.objects) {
+                for (let obj of roomObj.objects) {
+                    if (obj.type === 'obstacle' && obj.rects) {
+                        for (let r of obj.rects) {
+                            if (
+                                testRectX.x + testRectX.w/2 > r.x - r.w/2 &&
+                                testRectX.x - testRectX.w/2 < r.x + r.w/2 &&
+                                testRectX.y + testRectX.h/2 > r.y - r.h/2 &&
+                                testRectX.y - testRectX.h/2 < r.y + r.h/2
+                            ) {
+                                xBlocked = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!xBlocked) enemy.x = testX;
+            // Try moving only in y
+            let testY = prevY + (enemy.y - prevY);
+            let testRectY = {x: prevX, y: testY, w: enemy.w, h: enemy.h};
+            let yBlocked = false;
+            if (roomObj.objects) {
+                for (let obj of roomObj.objects) {
+                    if (obj.type === 'obstacle' && obj.rects) {
+                        for (let r of obj.rects) {
+                            if (
+                                testRectY.x + testRectY.w/2 > r.x - r.w/2 &&
+                                testRectY.x - testRectY.w/2 < r.x + r.w/2 &&
+                                testRectY.y + testRectY.h/2 > r.y - r.h/2 &&
+                                testRectY.y - testRectY.h/2 < r.y + r.h/2
+                            ) {
+                                yBlocked = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            if (!yBlocked) enemy.y = testY;
         }
     }
 }
@@ -1000,81 +1347,92 @@ function updateTears() {
             tear.alive = false;
             continue;
         }
-        // Out of room bounds
-        if (
-            tear.x < 0 || tear.x > ROOM_WIDTH ||
-            tear.y < 0 || tear.y > ROOM_HEIGHT
-        ) {
-            tear.alive = false;
-            continue;
+        // Enemy collision (only for player tears)
+        if (tear.source === 'player') {
+            for (let enemy of roomObj.enemies) {
+                if (!enemy.alive) continue;
+                // Tank: invincible after hit
+                if (enemy.effect === 'tank' && enemy.state.invincible && enemy.state.invincible > 0) continue;
+                if (Math.abs(tear.x - enemy.x) < (tear.r+enemy.w/2) && Math.abs(tear.y - enemy.y) < (tear.r+enemy.h/2)) {
+                    // Push objects near splash
+                    if (roomObj.objects) {
+                        for (let obj of roomObj.objects) {
+                            let odist = Math.hypot(tear.x - obj.x, tear.y - obj.y);
+                            if (odist < 60) {
+                                let force = 3 * (1 - odist/60);
+                                let dx = obj.x - tear.x;
+                                let dy = obj.y - tear.y;
+                                let d = Math.max(1, Math.hypot(dx, dy));
+                                obj.vx += (dx/d) * force;
+                                obj.vy += (dy/d) * force;
+                            }
+                        }
+                    }
+                    // Tank: set invincible after hit
+                    if (enemy.effect === 'tank') enemy.state.invincible = 30;
+                    enemy.health -= player.tearDamage;
+                    // --- Knockback ---
+                    let knockbackStrength = 7 + player.tearDamage * 0.7;
+                    let dx = enemy.x - tear.x;
+                    let dy = enemy.y - tear.y;
+                    let d = Math.max(0.1, Math.hypot(dx, dy));
+                    enemy.vx += (dx/d) * knockbackStrength;
+                    enemy.vy += (dy/d) * knockbackStrength * 0.7; // slightly less vertical knockback
+                    spawnSplash(tear.x, tear.y);
+                    tear.alive = false;
+                    if (enemy.health <= 0) {
+                        spawnEffect(enemy.x, enemy.y, 'blood-splash');
+                        enemy.alive = false;
+                        player.enemiesKilled++;
+                        // Splitter: spawn two Blobs on death
+                        if (enemy.effect === 'split') {
+                            for (let i = 0; i < 2; i++) {
+                                let ex = (enemy.x + (Math.random()-0.5)*40) / TILE_SIZE;
+                                let ey = (enemy.y + (Math.random()-0.5)*40) / TILE_SIZE;
+                                let blobType = ENEMY_TYPES.find(t => t.name === 'Blob');
+                                roomObj.enemies.push(spawnEnemyOfType(blobType, ex, ey));
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
         }
-        // Enemy collision
-        for (let enemy of roomObj.enemies) {
-            if (!enemy.alive) continue;
-            // Tank: invincible after hit
-            if (enemy.effect === 'tank' && enemy.state.invincible && enemy.state.invincible > 0) continue;
-            if (Math.abs(tear.x - enemy.x) < (tear.r+enemy.w/2) && Math.abs(tear.y - enemy.y) < (tear.r+enemy.h/2)) {
-                // Push objects near splash
-                if (roomObj.objects) {
-                    for (let obj of roomObj.objects) {
-                        let odist = Math.hypot(tear.x - obj.x, tear.y - obj.y);
-                        if (odist < 60) {
-                            let force = 3 * (1 - odist/60);
-                            let dx = obj.x - tear.x;
-                            let dy = obj.y - tear.y;
-                            let d = Math.max(1, Math.hypot(dx, dy));
-                            obj.vx += (dx/d) * force;
-                            obj.vy += (dy/d) * force;
-                        }
-                    }
-                }
-                // Tank: set invincible after hit
-                if (enemy.effect === 'tank') enemy.state.invincible = 30;
-                enemy.health -= player.tearDamage;
-                // --- Knockback ---
-                let knockbackStrength = 7 + player.tearDamage * 0.7;
-                let dx = enemy.x - tear.x;
-                let dy = enemy.y - tear.y;
-                let d = Math.max(0.1, Math.hypot(dx, dy));
-                enemy.vx += (dx/d) * knockbackStrength;
-                enemy.vy += (dy/d) * knockbackStrength * 0.7; // slightly less vertical knockback
-                spawnSplash(tear.x, tear.y);
+        // Player collision (only for enemy tears)
+        if (tear.source === 'enemy') {
+            if (
+                invincible === 0 &&
+                Math.abs(tear.x - (player.x + player.w/2)) < (tear.r + player.w/2) &&
+                Math.abs(tear.y - (player.y + player.h/2)) < (tear.r + player.h/2)
+            ) {
+                player.health--;
+                invincible = INVINCIBLE_TIME;
                 tear.alive = false;
-                if (enemy.health <= 0) {
-                    spawnEffect(enemy.x, enemy.y, 'blood-splash');
-                    enemy.alive = false;
-                    player.enemiesKilled++;
-                    // Splitter: spawn two Blobs on death
-                    if (enemy.effect === 'split') {
-                        for (let i = 0; i < 2; i++) {
-                            let ex = (enemy.x + (Math.random()-0.5)*40) / TILE_SIZE;
-                            let ey = (enemy.y + (Math.random()-0.5)*40) / TILE_SIZE;
-                            let blobType = ENEMY_TYPES.find(t => t.name === 'Blob');
-                            roomObj.enemies.push(spawnEnemyOfType(blobType, ex, ey));
-                        }
-                    }
-                }
-                break;
             }
         }
         // --- Furniture object collision (push in flight) ---
         if (roomObj.objects) {
             for (let obj of roomObj.objects) {
+                let objCenterY = obj.y + (obj.collisionOffsetY || 0);
                 // Simple AABB collision
                 if (
                     tear.x > obj.x - obj.w/2 &&
                     tear.x < obj.x + obj.w/2 &&
-                    tear.y > obj.y - obj.h/2 &&
-                    tear.y < obj.y + obj.h/2
+                    tear.y > objCenterY - obj.h/2 &&
+                    tear.y < objCenterY + obj.h/2
                 ) {
                     // Push object in tear's direction
                     let force = obj.pushStrength || 2;
                     obj.vx += tear.dx * force * 0.18;
                     obj.vy += (tear.dy + (tear.vy || 0)) * force * 0.18;
-                    // Glass: increment pushes and break if needed
-                    if (obj.type === 'glass') {
-                        obj.pushes = (obj.pushes || 0) + 1;
-                        if (obj.pushes === 3) spawnGlassBreak(obj.x, obj.y);
+                    // All breakable objects: lose hp
+                    if (obj.breakable && typeof obj.hp === 'number') {
+                        obj.hp--;
+                        if (obj.hp <= 0) {
+                            if (obj.type === 'glass') spawnGlassBreak(obj.x, objCenterY);
+                            else spawnObjectBreak(obj.x, objCenterY);
+                            obj._toRemove = true;
+                        }
                     }
                     // Destroy the tear on impact
                     spawnSplash(tear.x, tear.y);
@@ -1082,6 +1440,8 @@ function updateTears() {
                     break;
                 }
             }
+            // Remove destroyed objects
+            roomObj.objects = roomObj.objects.filter(obj => !obj._toRemove);
         }
     }
     // Remove dead tears
@@ -1117,6 +1477,9 @@ function tryRoomTransition() {
         bottom > doorMin && top < doorMax) {
         currentRoomX--;
         player.x = (ROOM_COLS-1)*TILE_SIZE - player.w;
+        // Place player vertically in the center of the door gap
+        let midRow = Math.floor(ROOM_ROWS / 2);
+        player.y = (midRow - 1) * TILE_SIZE + (TILE_SIZE * 1.5) - player.h/2;
         moved = true;
     }
     // Right
@@ -1202,10 +1565,14 @@ function drawEnemies() {
         } else {
             ctx.globalAlpha = 0.92;
         }
-        ctx.font = '44px serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(enemy.emoji, enemy.x, enemy.y);
+        if (enemy.img && enemy.img.complete && enemy.img.naturalWidth !== 0) {
+            ctx.drawImage(enemy.img, enemy.x - enemy.w/2, enemy.y - enemy.h/2, enemy.w, enemy.h);
+        } else {
+            ctx.fillStyle = enemy.color;
+            ctx.beginPath();
+            ctx.arc(enemy.x, enemy.y, enemy.w/2, 0, Math.PI*2);
+            ctx.fill();
+        }
         ctx.globalAlpha = 1;
         // Draw healthbar
         const barWidth = enemy.w;
@@ -1288,7 +1655,7 @@ function drawMinimap() {
     ctx.font = `${Math.floor(cellSize*0.9)}px serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText('👧🏼', offsetX + currentRoomX*cellSize + (cellSize-4)/2, offsetY + currentRoomY*cellSize + (cellSize-4)/2 + 1);
+    ctx.fillText('😶', offsetX + currentRoomX*cellSize + (cellSize-4)/2, offsetY + currentRoomY*cellSize + (cellSize-4)/2 + 1);
     ctx.restore();
 }
 
@@ -1345,12 +1712,21 @@ function draw() {
 function updateUI() {
     let hearts = '';
     for (let i = 0; i < player.maxHealth; i++) {
-        if (i < player.health) hearts += '❤️';
-        else hearts += '🖤';
+        if (heartImg.complete && heartImg.naturalWidth !== 0) {
+            if (i < player.health) hearts += `<img src='assets/items/heart.png' style='height:28px;vertical-align:middle;margin-right:2px;'>`;
+            else hearts += `<img src='assets/items/heart.png' style='height:28px;vertical-align:middle;filter:grayscale(1) brightness(0.5);margin-right:2px;'>`;
+        } else {
+            if (i < player.health) hearts += '❤️';
+            else hearts += '🖤';
+        }
     }
     let items = player.items.length ? 'Items: ' + player.items.join(', ') : '';
-    let pickups = `<span style=\"margin-left:24px\">🪙 ${player.coins}  🗝️ ${player.keys}  💣 ${player.bombs}  🧪 ${player.heals}</span>`;
-    let active = player.activeItem ? `<span style=\"margin-left:24px\">Active: ${player.activeItem.emoji} ${player.activeItem.name}${player.activeCooldown > 0 ? ' ('+player.activeCooldown+')' : ''}</span>` : '';
+    let pickups = `<span style="margin-left:24px">` +
+        (coinImg.complete && coinImg.naturalWidth !== 0 ? `<img src='assets/items/coin.png' style='height:22px;vertical-align:middle;'>` : '🪙') + ` ${player.coins}  ` +
+        (keyImg.complete && keyImg.naturalWidth !== 0 ? `<img src='assets/items/key.png' style='height:22px;vertical-align:middle;'>` : '🗝️') + ` ${player.keys}  ` +
+        (bombImg.complete && bombImg.naturalWidth !== 0 ? `<img src='assets/items/bomb.png' style='height:22px;vertical-align:middle;'>` : '💣') + ` ${player.bombs}  ` +
+        (healingImg.complete && healingImg.naturalWidth !== 0 ? `<img src='assets/items/healing.png' style='height:22px;vertical-align:middle;'>` : '🧪') + ` ${player.heals}</span>`;
+    let active = player.activeItem ? `<span style="margin-left:24px">Active: ${player.activeItem.emoji} ${player.activeItem.name}${player.activeCooldown > 0 ? ' ('+player.activeCooldown+')' : ''}</span>` : '';
     uiOverlay.innerHTML = `${hearts} ${pickups} <span style=\"margin-left:24px\">${items}</span> ${active}`;
 }
 
@@ -1368,7 +1744,8 @@ function updateStatsUI() {
         Tear Range: <span style=\"color:#8cf\">${TEAR_RANGE}</span><br>
         Player Speed: <span style=\"color:#6f6\">${player.speed.toFixed(2)}</span><br>
         Tear Speed: <span style=\"color:#8cf\">${player.tearSpeed.toFixed(2)}</span><br>
-        Tear Frequency: <span style=\"color:#8cf\">${(60/player.tearRate).toFixed(2)} /s</span>
+        Tear Frequency: <span style=\"color:#8cf\">${(60/player.tearRate).toFixed(2)} /s</span><br>
+        Teardrop Size: <span style=\"color:#8cf\">${player.tearDropSize}</span><br>
     `;
 }
 
@@ -1444,30 +1821,50 @@ function drawPickups() {
         ctx.globalAlpha = 1;
         // Draw pickup/item
         if (p.type === 'heart') {
-            ctx.font = '32px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('❤️', p.x, p.y+2);
+            if (heartImg.complete && heartImg.naturalWidth !== 0) {
+                ctx.drawImage(heartImg, p.x - p.r, p.y - p.r, p.r*2, p.r*2);
+            } else {
+                ctx.font = '32px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('❤️', p.x, p.y+2);
+            }
         } else if (p.type === 'coin') {
-            ctx.font = '32px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🪙', p.x, p.y+2);
+            if (coinImg.complete && coinImg.naturalWidth !== 0) {
+                ctx.drawImage(coinImg, p.x - p.r, p.y - p.r, p.r*2, p.r*2);
+            } else {
+                ctx.font = '32px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🪙', p.x, p.y+2);
+            }
         } else if (p.type === 'key') {
-            ctx.font = '32px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🗝️', p.x, p.y+2);
+            if (keyImg.complete && keyImg.naturalWidth !== 0) {
+                ctx.drawImage(keyImg, p.x - p.r, p.y - p.r, p.r*2, p.r*2);
+            } else {
+                ctx.font = '32px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🗝️', p.x, p.y+2);
+            }
         } else if (p.type === 'bomb') {
-            ctx.font = '32px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('💣', p.x, p.y+2);
+            if (bombImg.complete && bombImg.naturalWidth !== 0) {
+                ctx.drawImage(bombImg, p.x - p.r, p.y - p.r, p.r*2, p.r*2);
+            } else {
+                ctx.font = '32px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('💣', p.x, p.y+2);
+            }
         } else if (p.type === 'heal') {
-            ctx.font = '32px serif';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🧪', p.x, p.y+2);
+            if (healingImg.complete && healingImg.naturalWidth !== 0) {
+                ctx.drawImage(healingImg, p.x - p.r, p.y - p.r, p.r*2, p.r*2);
+            } else {
+                ctx.font = '32px serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🧪', p.x, p.y+2);
+            }
         } else if (p.type === 'item') {
             ctx.font = '32px serif';
             ctx.textAlign = 'center';
@@ -1499,6 +1896,39 @@ function updatePickups() {
         if (p.x > maxX) { p.x = maxX; p.vx = -p.vx * 0.4; }
         if (p.y < minY) { p.y = minY; p.vy = -p.vy * 0.4; }
         if (p.y > maxY) { p.y = maxY; p.vy = -p.vy * 0.4; }
+        // --- Object collision (with unpickable objects) ---
+        if (roomObj.objects) {
+            for (let obj of roomObj.objects) {
+                // Only collide with unpickable objects (furniture, not pickups)
+                if (obj.pickable) continue;
+                let objCenterY = obj.y + (obj.collisionOffsetY || 0);
+                let objW = obj.w * (obj.collisionBoxScale || 1);
+                let objH = obj.h * (obj.collisionBoxScale || 1);
+                // AABB collision
+                if (
+                    p.x + p.r > obj.x - objW/2 &&
+                    p.x - p.r < obj.x + objW/2 &&
+                    p.y + p.r > objCenterY - objH/2 &&
+                    p.y - p.r < objCenterY + objH/2
+                ) {
+                    // Push pickup out of object (simple bounce)
+                    let dx = p.x - obj.x;
+                    let dy = p.y - objCenterY;
+                    let dist = Math.max(1, Math.hypot(dx, dy));
+                    let minDist = (p.r + Math.max(objW, objH)/2) * 0.7;
+                    let overlap = minDist - dist;
+                    if (overlap > 0) {
+                        let ox = (dx/dist) * overlap;
+                        let oy = (dy/dist) * overlap;
+                        p.x += ox;
+                        p.y += oy;
+                        // Bounce velocity
+                        p.vx += (dx/dist) * 1.2;
+                        p.vy += (dy/dist) * 1.2;
+                    }
+                }
+            }
+        }
         // --- Player collision ---
         let canPick = false;
         if (p.type === 'heart') {
@@ -1551,6 +1981,7 @@ const ITEM_POOL = [
     {type: 'passive', name: 'Speed Up', emoji: '⚡', effect: function() { player.speed += 0.7; }},
     {type: 'passive', name: '+Damage', emoji: '💥', effect: function() { player.tearDamage += 1; }},
     {type: 'passive', name: 'Tears Up', emoji: '💧', effect: function() { player.tearRate = Math.max(20, player.tearRate - 20); }},
+    {type: 'passive', name: 'Big Tears', emoji: '🫧', effect: function() { player.tearDropSize += 6; }}, // NEW ITEM
 ];
 
 function giveItemToPlayer(item) {
@@ -2096,6 +2527,10 @@ function regenerateDungeonForNextLevel() {
     // Optionally, heal player a bit or give bonus
 }
 
+// --- Portal Image ---
+const portalImg = new Image();
+portalImg.src = 'assets/items/portal.png';
+
 function drawPortalAndReward() {
     if (!portalActive) return;
     // Draw portal shadow
@@ -2112,10 +2547,14 @@ function drawPortalAndReward() {
     // Draw portal
     ctx.save();
     ctx.globalAlpha = 0.85;
-    ctx.font = '64px serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('🌀', portalPos.x, portalPos.y);
+    if (portalImg.complete && portalImg.naturalWidth !== 0) {
+        ctx.drawImage(portalImg, portalPos.x - 48, portalPos.y - 48, 96, 96);
+    } else {
+        ctx.font = '64px serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('🌀', portalPos.x, portalPos.y);
+    }
     ctx.restore();
     // Draw reward
     if (bossReward && !bossReward.collected) {
@@ -2312,6 +2751,54 @@ function gameLoop() {
     requestAnimationFrame(gameLoop);
 }
 
+// --- Character Stats ---
+const CHARACTER_STATS = {
+    1: { // player1
+        name: 'The Boy',
+        health: 3,
+        maxHealth: 5,
+        speed: 3,
+        tearDamage: 1,
+        tearRate: 80,
+        tearDropSize: 18,
+        bombs: 2,
+        heals: 0
+    },
+    2: { // player2
+        name: 'Maggy',
+        health: 3,
+        maxHealth: 3,
+        speed: 4.2,
+        tearDamage: 1,
+        tearRate: 70,
+        tearDropSize: 16,
+        bombs: 1,
+        heals: 0
+    },
+    3: { // player3
+        name: 'Cartman',
+        health: 5,
+        maxHealth: 7,
+        speed: 2,
+        tearDamage: 1,
+        tearRate: 90,
+        tearDropSize: 22,
+        bombs: 1,
+        heals: 2
+    },
+    4: { // player4
+        name: 'Kenny',
+        health: 1,
+        maxHealth: 2,
+        speed: 3.2,
+        tearDamage: 1,
+        tearRate: 60,
+        tearDropSize: 8,
+        bombs: 10,
+        heals: 0
+    }
+};
+
 // --- Start Menu Logic ---
 let gameStarted = false;
 const startMenu = document.getElementById('startMenu');
@@ -2321,6 +2808,21 @@ function startGame() {
     if (gameStarted) return;
     gameStarted = true;
     if (startMenu) startMenu.style.display = 'none';
+    // Set player image based on selection
+    if (selectedChar === 1) playerImg.src = 'assets/player1.png';
+    else if (selectedChar === 2) playerImg.src = 'assets/player2.png';
+    else if (selectedChar === 3) playerImg.src = 'assets/player3.png';
+    else if (selectedChar === 4) playerImg.src = 'assets/player4.png';
+    // Set player stats based on selection
+    const stats = CHARACTER_STATS[selectedChar];
+    player.health = stats.health;
+    player.maxHealth = stats.maxHealth;
+    player.speed = stats.speed;
+    player.tearDamage = stats.tearDamage;
+    player.tearRate = stats.tearRate;
+    player.tearDropSize = stats.tearDropSize;
+    player.bombs = stats.bombs;
+    player.heals = stats.heals;
     requestAnimationFrame(gameLoop);
 }
 
@@ -2417,12 +2919,19 @@ function gameLoop() {
 gameLoop(); 
 
 const fullscreenBtn = document.getElementById('fullscreenBtn');
-if (fullscreenBtn) {
+const fullscreenImg = document.getElementById('fullscreenImg');
+if (fullscreenBtn && fullscreenImg) {
     function isFullscreen() {
         return document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement;
     }
-    function updateBtnText() {
-        fullscreenBtn.textContent = isFullscreen() ? 'Exit Fullscreen' : 'Fullscreen';
+    function updateBtnImage() {
+        if (isFullscreen()) {
+            fullscreenImg.src = 'assets/b_exitfullscreen.png';
+            fullscreenImg.alt = 'Exit Fullscreen';
+        } else {
+            fullscreenImg.src = 'assets/b_fullscreen.png';
+            fullscreenImg.alt = 'Fullscreen';
+        }
     }
     fullscreenBtn.addEventListener('click', () => {
         if (isFullscreen()) {
@@ -2448,11 +2957,11 @@ if (fullscreenBtn) {
             }
         }
     });
-    document.addEventListener('fullscreenchange', updateBtnText);
-    document.addEventListener('webkitfullscreenchange', updateBtnText);
-    document.addEventListener('mozfullscreenchange', updateBtnText);
-    document.addEventListener('MSFullscreenChange', updateBtnText);
-    updateBtnText();
+    document.addEventListener('fullscreenchange', updateBtnImage);
+    document.addEventListener('webkitfullscreenchange', updateBtnImage);
+    document.addEventListener('mozfullscreenchange', updateBtnImage);
+    document.addEventListener('MSFullscreenChange', updateBtnImage);
+    updateBtnImage();
 }
 
 // --- Pause Logic ---
@@ -2586,6 +3095,8 @@ const bedImg = new Image();
 bedImg.src = 'assets/bed1.png';
 const sofaImg = new Image();
 sofaImg.src = 'assets/sofa1.png';
+const tvImg = new Image();
+tvImg.src = 'assets/tv.png';
 
 // --- Helper: Add furniture to a room ---
 function spawnRoomObjects(roomObj) {
@@ -2605,7 +3116,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: tableImg,
             pushStrength: 1.2,
-            breakable: true
+            breakable: true,
+            hp: 4, // table
+            collisionOffsetY: -10,
+            collisionBoxScale: 0.7
         });
     }
     // 1-2 beds
@@ -2621,7 +3135,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: bedImg,
             pushStrength: 1.1,
-            breakable: true
+            breakable: true,
+            hp: 6, // bed
+            collisionOffsetY: -24,
+            collisionBoxScale: 0.7
         });
     }
     // 1-2 sofas
@@ -2632,12 +3149,15 @@ function spawnRoomObjects(roomObj) {
         roomObj.objects.push({
             type: 'big',
             x, y,
-            w: 96, h: 96,
+            w: 96, h: 60,
             vx: 0, vy: 0,
             pushable: true,
             img: sofaImg,
             pushStrength: 1.0,
-            breakable: true
+            breakable: true,
+            hp: 8, // sofa
+            collisionOffsetY: -18,
+            collisionBoxScale: 0.7
         });
     }
     // 2-5 medium chairs
@@ -2653,7 +3173,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: chairImg,
             pushStrength: 2.5,
-            breakable: true
+            breakable: true,
+            hp: 2, // chair
+            collisionOffsetY: -10,
+            collisionBoxScale: 0.7
         });
     }
     // 1-2 armchairs
@@ -2669,7 +3192,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: armchairImg,
             pushStrength: 2.0,
-            breakable: true
+            breakable: true,
+            hp: 3, // armchair
+            collisionOffsetY: -14,
+            collisionBoxScale: 0.7
         });
     }
     // 1-2 laptops
@@ -2685,7 +3211,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: laptopImg,
             pushStrength: 2.3,
-            breakable: true
+            breakable: true,
+            hp: 2, // laptop
+            collisionOffsetY: -8,
+            collisionBoxScale: 0.7
         });
     }
     // 1-2 blenders
@@ -2701,7 +3230,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: blenderImg,
             pushStrength: 2.2,
-            breakable: true
+            breakable: true,
+            hp: 2, // blender
+            collisionOffsetY: -8,
+            collisionBoxScale: 0.7
         });
     }
     // 2-4 coffee cups
@@ -2717,8 +3249,10 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: coffeeCupImg,
             pushStrength: 3.2,
-            pushes: 0,
-            breakable: true
+            breakable: true,
+            hp: 1, // coffee cup
+            collisionOffsetY: -4,
+            collisionBoxScale: 0.7
         });
     }
     // 2-4 vases
@@ -2734,8 +3268,29 @@ function spawnRoomObjects(roomObj) {
             pushable: true,
             img: vaseImg,
             pushStrength: 2.7,
-            pushes: 0,
-            breakable: true
+            breakable: true,
+            hp: 2, // vase
+            collisionOffsetY: -8,
+            collisionBoxScale: 0.7
+        });
+    }
+    // 1-2 TVs
+    let numTVs = 1 + Math.floor(Math.random()*2);
+    for (let i = 0; i < numTVs; i++) {
+        let x = (2 + Math.random() * (ROOM_COLS-4)) * TILE_SIZE + TILE_SIZE/2;
+        let y = (2 + Math.random() * (ROOM_ROWS-4)) * TILE_SIZE + TILE_SIZE/2;
+        roomObj.objects.push({
+            type: 'medium',
+            x, y,
+            w: 60, h: 60, // TV size
+            vx: 0, vy: 0,
+            pushable: true,
+            img: tvImg,
+            pushStrength: 2.1,
+            breakable: true,
+            hp: 3, // TV
+            collisionOffsetY: -6,
+            collisionBoxScale: 0.7
         });
     }
 }
@@ -2796,6 +3351,23 @@ function drawObjects() {
             ctx.fillStyle = obj.type === 'table' ? '#b97a56' : '#c9b18a';
             ctx.fillRect(obj.x - obj.w/2, obj.y - obj.h/2, obj.w, obj.h);
         }
+        if (obj.type === 'obstacle' && obj.rects) {
+            ctx.save();
+            ctx.globalAlpha = 1;
+            for (let r of obj.rects) {
+                if (r.img && r.img.complete && r.img.naturalWidth !== 0) {
+                    ctx.drawImage(r.img, r.x - r.w/2, r.y - r.h/2, r.w, r.h);
+                } else {
+                    ctx.fillStyle = '#888';
+                    ctx.fillRect(r.x - r.w/2, r.y - r.h/2, r.w, r.h);
+                    ctx.strokeStyle = '#444';
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeRect(r.x - r.w/2, r.y - r.h/2, r.w, r.h);
+                }
+            }
+            ctx.restore();
+            continue;
+        }
     }
 }
 
@@ -2836,8 +3408,45 @@ function updateObjects() {
             }
         }
     }
-    // Remove broken glass objects
-    roomObj.objects = roomObj.objects.filter(obj => !(obj.type === 'glass' && obj.pushes >= 3));
+    // Remove broken glass objects and destroyed obstacles
+    roomObj.objects = roomObj.objects.filter(obj => (obj.hp === undefined || obj.hp > 0) && !obj._toRemove);
+    // Obstacles collide with all other items (pickups, bombs, furniture, etc)
+    for (let obj of roomObj.objects) {
+        if (obj.type === 'obstacle' && obj.rects) {
+            for (let other of roomObj.objects) {
+                if (other === obj) continue;
+                // For each rectangle in the obstacle
+                for (let r of obj.rects) {
+                    // Use center-based AABB for other object
+                    let ox = other.x || 0, oy = other.y || 0, ow = other.w || 32, oh = other.h || 32;
+                    if (
+                        ox + ow/2 > r.x - r.w/2 &&
+                        ox - ow/2 < r.x + r.w/2 &&
+                        oy + oh/2 > r.y - r.h/2 &&
+                        oy - oh/2 < r.y + r.h/2
+                    ) {
+                        // Push other object away from the rectangle center
+                        let dx = (ox - r.x);
+                        let dy = (oy - r.y);
+                        let dist = Math.max(1, Math.hypot(dx, dy));
+                        let minDist = (Math.max(ow, oh) + Math.max(r.w, r.h))/2 * 0.7;
+                        let overlap = minDist - dist;
+                        if (overlap > 0) {
+                            let oxPush = (dx/dist) * overlap;
+                            let oyPush = (dy/dist) * overlap;
+                            if (other.vx !== undefined) other.vx += oxPush * 0.5;
+                            if (other.vy !== undefined) other.vy += oyPush * 0.5;
+                            // For pickups, move position directly if stuck
+                            if (other.type === 'heart' || other.type === 'coin' || other.type === 'key' || other.type === 'bomb' || other.type === 'heal' || other.type === 'item') {
+                                other.x += oxPush * 0.5;
+                                other.y += oyPush * 0.5;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // --- Player/object push and collision ---
@@ -2849,12 +3458,12 @@ function pushObjectsByEntity(entity) {
         if (
             entity.x + entity.w/2 > obj.x - obj.w/2 &&
             entity.x - entity.w/2 < obj.x + obj.w/2 &&
-            entity.y + entity.h/2 > obj.y - obj.h/2 &&
-            entity.y - entity.h/2 < obj.y + obj.h/2
+            entity.y + entity.h/2 > (obj.y + (obj.collisionOffsetY || 0)) - obj.h/2 &&
+            entity.y - entity.h/2 < (obj.y + (obj.collisionOffsetY || 0)) + obj.h/2
         ) {
             // Push object in direction of entity movement
             let dx = obj.x - (entity.x);
-            let dy = obj.y - (entity.y);
+            let dy = (obj.y + (obj.collisionOffsetY || 0)) - (entity.y);
             let dist = Math.max(1, Math.hypot(dx, dy));
             let force = obj.pushStrength || 2.5;
             obj.vx += (dx/dist) * force;
@@ -2966,4 +3575,85 @@ function drawPlayer() {
         ctx.fill();
     }
     ctx.restore();
+}
+
+// --- Item Images ---
+const heartImg = new Image();
+heartImg.src = 'assets/items/heart.png';
+const coinImg = new Image();
+coinImg.src = 'assets/items/coin.png';
+const keyImg = new Image();
+keyImg.src = 'assets/items/key.png';
+const healingImg = new Image();
+healingImg.src = 'assets/items/healing.png';
+const bombImg = new Image();
+bombImg.src = 'assets/items/bomb.png';
+
+// --- Obstacle Images ---
+const obstacleImgs = [
+    (() => { let img = new Image(); img.src = 'assets/obstacles/o1.png'; return img; })(),
+    (() => { let img = new Image(); img.src = 'assets/obstacles/o2.png'; return img; })()
+];
+
+// --- Character Selection Logic ---
+let selectedChar = 1;
+const charOptions = document.querySelectorAll('.char-option');
+charOptions.forEach(option => {
+    option.addEventListener('click', function() {
+        charOptions.forEach(o => o.classList.remove('selected'));
+        this.classList.add('selected');
+        selectedChar = parseInt(this.getAttribute('data-char'));
+    });
+});
+
+// --- How to Play Modal Logic ---
+const howToPlayBtn = document.getElementById('howToPlayBtn');
+const howToPlayModal = document.getElementById('howToPlayModal');
+const closeHowToPlay = document.getElementById('closeHowToPlay');
+if (howToPlayBtn && howToPlayModal && closeHowToPlay) {
+    howToPlayBtn.onclick = () => {
+        howToPlayModal.style.display = 'flex';
+    };
+    closeHowToPlay.onclick = () => {
+        howToPlayModal.style.display = 'none';
+    };
+    // Optional: close modal when clicking outside the popup
+    howToPlayModal.addEventListener('click', (e) => {
+        if (e.target === howToPlayModal) {
+            howToPlayModal.style.display = 'none';
+        }
+    });
+}
+
+// --- Character Tooltip Logic ---
+const charTooltip = document.getElementById('charTooltip');
+if (charTooltip && charOptions.length) {
+    charOptions.forEach(option => {
+        option.addEventListener('mouseenter', function(e) {
+            const charId = parseInt(this.getAttribute('data-char'));
+            const stats = CHARACTER_STATS[charId];
+            let statHtml = `<b style='font-size:1.18em;'>${stats.name}</b><br>`;
+            statHtml += `<span style='color:#fff'>Health:</span> <b>${stats.health}</b> &nbsp; <span style='color:#fff'>Max:</span> <b>${stats.maxHealth}</b><br>`;
+            statHtml += `<span style='color:#fff'>Speed:</span> <b>${stats.speed}</b><br>`;
+            statHtml += `<span style='color:#fff'>Tear Damage:</span> <b>${stats.tearDamage}</b><br>`;
+            statHtml += `<span style='color:#fff'>Tear Rate:</span> <b>${stats.tearRate}</b><br>`;
+            statHtml += `<span style='color:#fff'>Tear Size:</span> <b>${stats.tearDropSize}</b><br>`;
+            statHtml += `<span style='color:#fff'>Bombs:</span> <b>${stats.bombs}</b> &nbsp; <span style='color:#fff'>Heals:</span> <b>${stats.heals}</b>`;
+            charTooltip.innerHTML = statHtml;
+            charTooltip.style.display = 'block';
+        });
+        option.addEventListener('mousemove', function(e) {
+            // Position tooltip near mouse, but not off screen
+            let x = e.clientX + 18;
+            let y = e.clientY + 8;
+            const tooltipRect = charTooltip.getBoundingClientRect();
+            if (x + tooltipRect.width > window.innerWidth - 12) x = window.innerWidth - tooltipRect.width - 12;
+            if (y + tooltipRect.height > window.innerHeight - 12) y = window.innerHeight - tooltipRect.height - 12;
+            charTooltip.style.left = x + 'px';
+            charTooltip.style.top = y + 'px';
+        });
+        option.addEventListener('mouseleave', function() {
+            charTooltip.style.display = 'none';
+        });
+    });
 }

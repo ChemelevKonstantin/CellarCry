@@ -15,13 +15,40 @@
             <button id="restartBtn">Restart</button>
         </div>
     </div>
-    <button id="fullscreenBtn" style="position:absolute;top:16px;right:32px;z-index:20;">Fullscreen</button>
+    <button id="fullscreenBtn" style="position:absolute;top:16px;right:32px;z-index:20;padding:0;border:none;background:none;">
+        <img id="fullscreenImg" src="assets/b_fullscreen.png" alt="Fullscreen" style="width:180px;height:auto;display:block;">
+    </button>
     <div id="startMenu" style="display:flex;flex-direction:column;align-items:center;justify-content:center;position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(20,20,20,0.92);z-index:1000;">
-        <h1 style="color:#f5e663;font-size:3em;margin-bottom:24px;letter-spacing:2px;">GameCrawler</h1>
-        <button id="startGameBtn" style="font-size:1.5em;padding:16px 48px;border-radius:12px;border:none;background:#f5e663;color:#222;cursor:pointer;box-shadow:0 2px 12px #0008;">Start Game</button>
+        <img src="assets/main.png" alt="Game Poster" style="max-width:420px;width:80vw;border-radius:18px;margin-bottom:2px;">
+        <div id="characterSelect" style="display:flex;gap:24px;justify-content:center;align-items:end;margin-bottom:18px;">
+            <img class="char-option" src="assets/player1.png" alt="Character 1" data-char="1" style="width:72px;height:72px;object-fit:contain;cursor:pointer;border:4px solid #444;border-radius:16px;background:#222;box-shadow:0 2px 12px #0008;">
+            <img class="char-option" src="assets/player2.png" alt="Character 2" data-char="2" style="width:72px;height:72px;object-fit:contain;cursor:pointer;border:4px solid #444;border-radius:16px;background:#222;box-shadow:0 2px 12px #0008;">
+            <img class="char-option" src="assets/player3.png" alt="Character 3" data-char="3" style="width:72px;height:72px;object-fit:contain;cursor:pointer;border:4px solid #444;border-radius:16px;background:#222;box-shadow:0 2px 12px #0008;">
+            <img class="char-option" src="assets/player4.png" alt="Character 4" data-char="4" style="width:72px;height:72px;object-fit:contain;cursor:pointer;border:4px solid #444;border-radius:16px;background:#222;box-shadow:0 2px 12px #0008;">
+        </div>
+        <div id="charTooltip" style="display:none;position:absolute;z-index:3000;min-width:180px;max-width:260px;background:#222;padding:18px 20px 14px 20px;border-radius:14px;box-shadow:0 4px 32px #000a;color:#ffe066;font-size:1.08em;pointer-events:none;line-height:1.6;"></div>
+        <img id="startGameBtn" src="assets/b_start.png" alt="Start Game" style="width:240px;max-width:70vw;cursor:pointer;box-shadow:0 2px 12px #0008;border-radius:12px;margin-top:0;">
+        <img id="howToPlayBtn" src="assets/b_howtoplay.png" alt="How to Play" style="width:180px;max-width:50vw;cursor:pointer;margin-top:18px;box-shadow:0 2px 12px #0008;border-radius:12px;">
+    </div>
+    <div id="howToPlayModal" style="display:none;position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.7);z-index:2000;align-items:center;justify-content:center;">
+        <div style="background:#222;padding:36px 32px 28px 32px;border-radius:18px;box-shadow:0 4px 32px #000a;max-width:420px;width:90vw;text-align:left;position:relative;">
+            <button id="closeHowToPlay" style="position:absolute;top:12px;right:16px;font-size:1.6em;background:none;border:none;color:#ffe066;cursor:pointer;">&times;</button>
+            <h2 style="color:#ffe066;text-align:center;margin-top:0;margin-bottom:18px;">How to Play</h2>
+            <ul style="color:#fff;font-size:1.15em;line-height:1.7;margin:0 0 12px 0;padding-left:18px;">
+                <li><b>Move:</b> WASD or Arrow Keys</li>
+                <li><b>Shoot:</b> Move in a direction</li>
+                <li><b>Bomb:</b> <b>Space</b> (if you have bombs)</li>
+                <li><b>Heal:</b> <b>H</b> (if you have heals)</li>
+                <li><b>Pause:</b> <b>P</b></li>
+                <li><b>Fullscreen:</b> Click fullscreen button (top right)</li>
+                <li><b>Pickups:</b> Walk over items to collect</li>
+                <li><b>Character:</b> Select to have different stats</li>
+            </ul>
+            <div style="color:#ffe066;font-size:1em;text-align:center;margin-top:10px;">Defeat all enemies to open doors. Beat the boss to advance!</div>
+        </div>
     </div>
     <div id="pauseOverlay" style="display:none;position:fixed;left:0;top:0;width:100vw;height:100vh;background:rgba(0,0,0,0.55);z-index:900;align-items:center;justify-content:center;">
-        <h1 style="color:#f5e663;font-size:3em;text-align:center;width:100vw;">Paused</h1>
+        <img src="assets/pause.png" alt="Paused" style="max-width:340px;width:40vw;filter:drop-shadow(0 0 32px #ffe066);">
     </div>
     <canvas id="gameCanvas"></canvas>
     <script src="script.js"></script>
